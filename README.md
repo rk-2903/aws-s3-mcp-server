@@ -2,6 +2,9 @@
 
 An MCP server implementation for retrieving  data such as PDF's from S3.
 
+### Note: dev branch has login to PutObject and CreateBucket as an extenion to the default get operation provided in https://github.com/aws-samples/sample-mcp-server-s3 
+
+
 ## Features
 ### Resources
 Expose AWS S3 Data through **Resources**. (think of these sort of like GET endpoints; they are used to load information into the LLM's context). Currently only **PDF** documents supported and limited to **1000** objects.
@@ -114,6 +117,7 @@ Upon launching, the Inspector will display a URL that you can access in your bro
 
 See [CONTRIBUTING](CONTRIBUTING.md#security-issue-notifications) for more information.
 
-## License
 
-This library is licensed under the MIT-0 License. See the LICENSE file.
+## References:
+https://github.com/aws-samples/sample-mcp-server-s3
+https://github.com/modelcontextprotocol/servers
