@@ -1,0 +1,21 @@
+[project]
+name = "s3-mcp-server"
+version = "0.1.0"
+description = "A MCP server project"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+ "aioboto3>=13.2.0",
+ "mcp>=1.0.0",
+ "python-dotenv>=1.0.1",
+]
+[[project.authors]]
+name = "Tonny Ouma"
+email = "tonouma@amazon.com"
+
+[build-system]
+requires = [ "hatchling",]
+build-backend = "hatchling.build"
+
+[project.scripts]
+s3-mcp-server = "s3_mcp_server:main"
