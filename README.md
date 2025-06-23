@@ -2,7 +2,8 @@
 
 An MCP server implementation for retrieving  data such as PDF's from S3.
 
-### Note: dev branch has login to PutObject and CreateBucket as an extenion to the default get operation provided in https://github.com/aws-samples/sample-mcp-server-s3 
+### Note: `dev` branch has logic to PutObject and CreateBucket as an extenion to the default get operation provided in
+https://github.com/aws-samples/sample-mcp-server-s3 
 
 
 ## Features
