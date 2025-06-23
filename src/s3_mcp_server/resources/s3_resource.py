@@ -4,6 +4,8 @@ from typing import List, Dict, Any, Optional
 import aioboto3
 import asyncio
 from botocore.config import Config
+import base64
+import json
 
 logger = logging.getLogger("s3_mcp_server")
 
@@ -94,6 +96,160 @@ class S3Resource:
                     buckets = [b for b in buckets if b['Name'] > start_after]
 
                 return buckets[:self.max_buckets]
+
+    async def create_bucket(self, bucket_name: str, region: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Create a new S3 bucket
+        Args:
+            bucket_name: Name of the bucket to create
+            region: AWS region for the bucket (defaults to configured region)
+        Returns:
+            Dict containing bucket creation response
+        """
+        target_region = region or self.region_name or 'us-east-1'
+        
+        async with self.session.client('s3', region_name=target_region, config=self.config) as s3:
+            try:
+                # Check if bucket already exists
+                try:
+                    await s3.head_bucket(Bucket=bucket_name)
+                    logger.warning(f"Bucket {bucket_name} already exists")
+                    return {
+                        'status': 'exists',
+                        'bucket_name': bucket_name,
+                        'message': f'Bucket {bucket_name} already exists'
+                    }
+                except Exception:
+                    # Bucket doesn't exist, proceed with creation
+                    pass
+
+                # Create bucket configuration
+                create_bucket_config = {}
+                if target_region != 'us-east-1':
+                    create_bucket_config = {
+                        'LocationConstraint': target_region
+                    }
+
+                # Create bucket
+                if create_bucket_config:
+                    response = await s3.create_bucket(
+                        Bucket=bucket_name,
+                        CreateBucketConfiguration=create_bucket_config
+                    )
+                else:
+                    response = await s3.create_bucket(Bucket=bucket_name)
+
+                logger.info(f"Successfully created bucket: {bucket_name}")
+                
+                # Add to configured buckets if not already there
+                if self.configured_buckets and bucket_name not in self.configured_buckets:
+                    self.configured_buckets.append(bucket_name)
+
+                return {
+                    'status': 'created',
+                    'bucket_name': bucket_name,
+                    'location': response.get('Location', ''),
+                    'region': target_region,
+                    'message': f'Bucket {bucket_name} created successfully'
+                }
+
+            except Exception as e:
+                logger.error(f"Error creating bucket {bucket_name}: {str(e)}")
+                raise Exception(f"Failed to create bucket {bucket_name}: {str(e)}")
+
+    async def put_object(self, bucket_name: str, key: str, content: str, 
+                        content_type: Optional[str] = None, 
+                        is_base64: bool = False,
+                        metadata: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """
+        Upload an object to S3 bucket
+        Args:
+            bucket_name: Name of the S3 bucket
+            key: Object key (file path in bucket)
+            content: Content to upload (string or base64 encoded)
+            content_type: MIME type of the content
+            is_base64: Whether content is base64 encoded
+            metadata: Optional metadata dictionary
+        Returns:
+            Dict containing upload response information
+        """
+        if self.configured_buckets and bucket_name not in self.configured_buckets:
+            raise ValueError(f"Bucket {bucket_name} not in configured bucket list")
+
+        async with self.session.client('s3', region_name=self.region_name, config=self.config) as s3:
+            try:
+                # Prepare content
+                if is_base64:
+                    body = base64.b64decode(content)
+                else:
+                    body = content.encode('utf-8') if isinstance(content, str) else content
+
+                # Determine content type if not provided
+                if not content_type:
+                    content_type = self._get_content_type(key)
+
+                # Prepare put_object parameters
+                put_params = {
+                    'Bucket': bucket_name,
+                    'Key': key,
+                    'Body': body,
+                    'ContentType': content_type
+                }
+
+                # Add metadata if provided
+                if metadata:
+                    put_params['Metadata'] = metadata
+
+                # Upload object
+                response = await s3.put_object(**put_params)
+
+                logger.info(f"Successfully uploaded object: s3://{bucket_name}/{key}")
+
+                return {
+                    'status': 'uploaded',
+                    'bucket_name': bucket_name,
+                    'key': key,
+                    'etag': response.get('ETag', '').strip('"'),
+                    'content_type': content_type,
+                    'size': len(body),
+                    'uri': f's3://{bucket_name}/{key}',
+                    'message': f'Object uploaded successfully to s3://{bucket_name}/{key}'
+                }
+
+            except Exception as e:
+                logger.error(f"Error uploading object {key} to bucket {bucket_name}: {str(e)}")
+                raise Exception(f"Failed to upload object to s3://{bucket_name}/{key}: {str(e)}")
+
+    def _get_content_type(self, key: str) -> str:
+        """
+        Determine content type based on file extension
+        """
+        extension_map = {
+            '.txt': 'text/plain',
+            '.json': 'application/json',
+            '.xml': 'application/xml',
+            '.html': 'text/html',
+            '.css': 'text/css',
+            '.js': 'application/javascript',
+            '.pdf': 'application/pdf',
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.svg': 'image/svg+xml',
+            '.csv': 'text/csv',
+            '.md': 'text/markdown',
+            '.yml': 'application/x-yaml',
+            '.yaml': 'application/x-yaml',
+            '.py': 'text/x-python',
+            '.zip': 'application/zip',
+            '.tar': 'application/x-tar',
+            '.gz': 'application/gzip'
+        }
+        
+        # Get file extension
+        ext = os.path.splitext(key.lower())[1]
+        return extension_map.get(ext, 'application/octet-stream')
 
     async def list_objects(self, bucket_name: str, prefix: str = "", max_keys: int = 1000) -> List[dict]:
         """

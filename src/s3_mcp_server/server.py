@@ -15,6 +15,7 @@ from .resources.s3_resource import S3Resource
 from pydantic import AnyUrl
 
 import base64
+import json
 
 # Initialize server
 server = Server("s3_service")
@@ -215,6 +216,64 @@ async def handle_list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="CreateBucket", # https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateBucket.html
+            description="Creates a new S3 bucket. To create the bucket successfully, you must be authenticated and have the s3:CreateBucket permission. Bucket names must be between 3 and 63 characters long and can consist only of lowercase letters, numbers, dots, and hyphens.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "Bucket": {
+                        "type": "string", 
+                        "description": "The name of the bucket to create. Bucket names must be between 3 and 63 characters long and can consist only of lowercase letters, numbers, dots, and hyphens. Bucket names must be unique across all existing bucket names in Amazon S3.",
+                        "minLength": 3,
+                        "maxLength": 63,
+                        "pattern": "^[a-z0-9][a-z0-9.-]*[a-z0-9]$"
+                    },
+                    "Region": {
+                        "type": "string", 
+                        "description": "The AWS Region where the bucket will be created. If not specified, uses the configured default region. Valid values include us-east-1, us-west-2, eu-west-1, etc."
+                    }
+                },
+                "required": ["Bucket"],
+            },
+        ),
+        Tool(
+            name="PutObject", # https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html
+            description="Adds an object to a bucket. You must have WRITE permissions on a bucket to add an object to it. Amazon S3 never adds partial objects; if you receive a success response, Amazon S3 added the entire object to the bucket.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "Bucket": {
+                        "type": "string", 
+                        "description": "The bucket name to which the PUT action was initiated. Bucket names are case sensitive."
+                    },
+                    "Key": {
+                        "type": "string", 
+                        "description": "Object key for which the PUT action was initiated. This is the full path/name of the object in the bucket.",
+                        "minLength": 1
+                    },
+                    "Body": {
+                        "type": "string", 
+                        "description": "Object data content as a string. For binary files, provide base64-encoded content and set IsBase64 to true."
+                    },
+                    "ContentType": {
+                        "type": "string", 
+                        "description": "A standard MIME type describing the format of the object data. If not specified, will be auto-detected based on file extension. Examples: text/plain, application/json, image/jpeg, application/pdf"
+                    },
+                    "IsBase64": {
+                        "type": "boolean", 
+                        "description": "Set to true if the Body content is base64-encoded binary data. Default is false for plain text content.",
+                        "default": False
+                    },
+                    "Metadata": {
+                        "type": "object",
+                        "description": "A map of metadata to store with the object in S3. Metadata keys must begin with 'x-amz-meta-' prefix when set via API.",
+                        "additionalProperties": {"type": "string"}
+                    }
+                },
+                "required": ["Bucket", "Key", "Body"],
+            },
+        ),
+        Tool(
             name="ListObjectsV2", # https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html
             description="Returns some or all (up to 1,000) of the objects in a bucket with each request. You can use the request parameters as selection criteria to return a subset of the objects in a bucket. To get a list of your buckets, see ListBuckets.",
             inputSchema={
@@ -253,6 +312,9 @@ async def handle_call_tool(
     name: str, arguments: dict | None
 ) -> list[TextContent | ImageContent | EmbeddedResource]:
     try:
+        if arguments is None:
+            arguments = {}
+            
         match name:
             case "ListBuckets":
                 buckets = boto3_s3_client.list_buckets(**arguments)
@@ -262,6 +324,61 @@ async def handle_call_tool(
                         text=str(buckets)
                     )
                 ]
+            case "CreateBucket":
+                # Extract parameters
+                bucket_name = arguments.get("Bucket")
+                region = arguments.get("Region")
+                
+                if not bucket_name:
+                    raise ValueError("Bucket name is required")
+                
+                # Validate bucket name
+                if not (3 <= len(bucket_name) <= 63):
+                    raise ValueError("Bucket name must be between 3 and 63 characters long")
+                
+                # Use our enhanced S3Resource to create bucket
+                result = await s3_resource.create_bucket(bucket_name, region)
+                
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, indent=2)
+                    )
+                ]
+                
+            case "PutObject":
+                # Extract parameters
+                bucket_name = arguments.get("Bucket")
+                key = arguments.get("Key")
+                body = arguments.get("Body")
+                content_type = arguments.get("ContentType")
+                is_base64 = arguments.get("IsBase64", False)
+                metadata = arguments.get("Metadata")
+                
+                if not bucket_name:
+                    raise ValueError("Bucket name is required")
+                if not key:
+                    raise ValueError("Object key is required")
+                if not body:
+                    raise ValueError("Object body is required")
+                
+                # Use our enhanced S3Resource to upload object
+                result = await s3_resource.put_object(
+                    bucket_name=bucket_name,
+                    key=key,
+                    content=body,
+                    content_type=content_type,
+                    is_base64=is_base64,
+                    metadata=metadata
+                )
+                
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps(result, indent=2)
+                    )
+                ]
+                
             case "ListObjectsV2":
                 objects = boto3_s3_client.list_objects_v2(**arguments)
                 return [
@@ -280,6 +397,7 @@ async def handle_call_tool(
                     )
                 ]
     except Exception as error:
+        logger.error(f"Error in tool {name}: {str(error)}")
         return [
             TextContent(
                 type="text",
